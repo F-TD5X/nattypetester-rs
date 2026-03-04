@@ -10,7 +10,7 @@ pub enum AppError {
     Io(#[from] io::Error),
 
     #[error("TLS error: {0}")]
-    Tls(#[from] native_tls::Error),
+    Tls(#[from] rustls::Error),
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),

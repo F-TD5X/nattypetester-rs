@@ -1,8 +1,10 @@
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
-use native_tls::{HandshakeError, TlsConnector};
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 use crate::error::{AppError, AppResult};
 use crate::net::connect_tcp;
@@ -35,17 +37,16 @@ pub fn request_stun_over_stream(
                 "TLS transport requires --sni for IP literal servers".to_string(),
             )
         })?;
-        let connector = TlsConnector::new()?;
-        let mut tls_stream = match connector.connect(server_name, stream) {
-            Ok(stream) => stream,
-            Err(HandshakeError::Failure(err)) => return Err(err.into()),
-            Err(HandshakeError::WouldBlock(_mid)) => {
-                return Err(AppError::Protocol(
-                    "TLS handshake entered non-blocking state".to_string(),
-                ));
-            }
-        };
-        let local = tls_stream.get_ref().local_addr()?;
+        let local = stream.local_addr()?;
+        let root_store = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let server_name = ServerName::try_from(server_name.to_string()).map_err(|_| {
+            AppError::InvalidInput("TLS transport requires a valid DNS name in --sni".to_string())
+        })?;
+        let connection = ClientConnection::new(Arc::new(config), server_name)?;
+        let mut tls_stream = StreamOwned::new(connection, stream);
         tls_stream.write_all(payload)?;
         tls_stream.flush()?;
         let response = read_single_stun_message(&mut tls_stream)?;
